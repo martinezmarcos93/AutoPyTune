@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-rvc/
+venv/
+env/
+
+# Config local del editor/agente
+.claude/
+
+# Audio de trabajo (no versionar material pesado)
+data/**/*.wav
+data/**/*.mp3
+data/**/*.flac
+data/**/*.ogg
+data/**/*.m4a
+voz_original.wav
+resultado.wav
+
+# Modelos descargados por Demucs / torch / RVC
+*.th
+*.pt
+*.pth
+*.index
+
+# Material personal / notas de trabajo (no se publican)
+docs/Letras.docx
+*.docx
+docs/analisis_temas.md
+docs/designs/
+
+# Sistema
+.DS_Store
+Thumbs.db

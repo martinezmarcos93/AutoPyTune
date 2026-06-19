@@ -1,0 +1,26 @@
+# --- núcleo: GUI + motor de audio (afinar / pulir) ---
+PyQt6
+sounddevice
+soundfile
+librosa
+numpy
+psola
+pedalboard
+scipy
+
+# --- separación de voz / instrumental (Demucs) ---
+demucs
+torch
+# Con GPU NVIDIA, instalar el build CUDA de torch para acelerar:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+# --- opcional: mejor calidad de time-stretch ---
+# pyrubberband requiere el binario externo "Rubber Band". Sin él se usa
+# librosa automáticamente. Descomentar solo si instalás ese binario.
+# pyrubberband
+
+# --- opcional: descargar audio desde YouTube para analizarlo ---
+# imageio-ffmpeg trae un binario de ffmpeg incluido (no hace falta instalarlo aparte).
+# NOTA: YouTube puede bloquear la descarga (SABR/PO-Token); más fiable usar archivos locales.
+yt-dlp
+imageio-ffmpeg
