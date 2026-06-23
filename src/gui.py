@@ -20,6 +20,9 @@ from PyQt6.QtWidgets import (
 )
 
 import audio_engine as eng
+from widgets.reproductor import Reproductor
+from widgets.waveform import VistaOnda
+from widgets.transporte import BarraTransporte
 
 # Rutas del proyecto (gui.py vive en src/, los datos en ../data/).
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -208,9 +211,18 @@ class AutotuneStudio(QWidget):
         self.ruta_suno = None
         self.ruta_mi_voz = None
 
+        # Reproductor con playhead (Incremento A del rediseño DAW).
+        self.reproductor = Reproductor(eng.SR)
+        self.fuente_idx = 0          # 0 = original, 1 = resultado
+
         # Timer para mostrar el tiempo de grabación en vivo.
         self.timer_grab = QTimer(self)
         self.timer_grab.timeout.connect(self._tic_grabacion)
+
+        # Timer del playhead (~60 FPS) mientras se reproduce.
+        self.timer_play = QTimer(self)
+        self.timer_play.setInterval(16)
+        self.timer_play.timeout.connect(self._tick_play)
 
         self.setWindowTitle("Autotune Studio")
         self.setMinimumSize(720, 600)
@@ -433,22 +445,24 @@ class AutotuneStudio(QWidget):
         self.barra.setTextVisible(True)
         root.addWidget(self.barra)
 
-        # ---- Reproducción / guardado ----
-        rep = QHBoxLayout()
-        self.btn_play_orig = QPushButton("▶  Original")
-        self.btn_play_orig.clicked.connect(lambda: self.reproducir(self.audio_original))
-        self.btn_play_proc = QPushButton("▶  Resultado")
-        self.btn_play_proc.setObjectName("play")
-        self.btn_play_proc.clicked.connect(lambda: self.reproducir(self.audio_procesado))
-        self.btn_stop = QPushButton("■  Stop")
-        self.btn_stop.clicked.connect(eng.detener_reproduccion)
-        self.btn_guardar = QPushButton("💾  Guardar")
-        self.btn_guardar.clicked.connect(self.al_guardar)
+        # ---- Reproductor (waveform + transporte) ----
+        reproductor = self._tarjeta("5 · Reproductor")
+        self.vista_onda = VistaOnda(eng.SR)
+        self.vista_onda.seek_solicitado.connect(self._on_seek)
+        reproductor.layout().addWidget(self.vista_onda)
 
-        for b in (self.btn_play_orig, self.btn_play_proc, self.btn_stop, self.btn_guardar):
-            b.setMinimumHeight(42)
-            rep.addWidget(b)
-        root.addLayout(rep)
+        self.transporte = BarraTransporte()
+        self.transporte.play_pausa.connect(self._on_play_pausa)
+        self.transporte.stop.connect(self._on_stop)
+        self.transporte.fuente_cambiada.connect(self._on_fuente)
+        self.transporte.volumen_cambiado.connect(self._on_volumen)
+        reproductor.layout().addWidget(self.transporte)
+
+        self.btn_guardar = QPushButton("💾  Guardar resultado")
+        self.btn_guardar.setMinimumHeight(42)
+        self.btn_guardar.clicked.connect(self.al_guardar)
+        reproductor.layout().addWidget(self.btn_guardar)
+        root.addWidget(reproductor)
 
         self._habilitar_resultado(False)
         root.addStretch()
@@ -587,6 +601,7 @@ class AutotuneStudio(QWidget):
         self.audio_procesado = audio   # reutiliza el reproductor "Resultado"
         self._bloquear(False)
         self._habilitar_resultado(True)
+        self.transporte.combo_fuente.setCurrentIndex(1)   # mostrar la mezcla
         self.barra.setValue(100)
         self.barra.setFormat("✓ Mezcla completa  (100%)")
 
@@ -697,6 +712,7 @@ class AutotuneStudio(QWidget):
         self.audio_procesado = audio
         self._bloquear(False)
         self._habilitar_resultado(True)
+        self.transporte.combo_fuente.setCurrentIndex(1)   # mostrar el resultado
         self.barra.setFormat("✓ Listo  (100%)")
 
     def proceso_error(self, msg):
@@ -705,10 +721,69 @@ class AutotuneStudio(QWidget):
         self.barra.setFormat("")
         QMessageBox.critical(self, "Error al procesar", msg)
 
-    def reproducir(self, audio):
-        if audio is not None:
-            eng.detener_reproduccion()
-            eng.reproducir(audio)
+    # --------------------------------------------------------------------- #
+    # Reproductor con playhead (waveform + transporte)
+    # --------------------------------------------------------------------- #
+    def _audio_actual(self):
+        return self.audio_procesado if self.fuente_idx == 1 else self.audio_original
+
+    def _refrescar_fuentes(self):
+        """Actualiza el selector y carga la onda de la fuente activa."""
+        tiene_orig = self.audio_original is not None
+        tiene_proc = self.audio_procesado is not None
+        self.transporte.set_fuentes_disponibles(tiene_orig, tiene_proc)
+        if self.fuente_idx == 1 and not tiene_proc:
+            self.fuente_idx = 0
+        self._cargar_fuente_en_reproductor()
+
+    def _cargar_fuente_en_reproductor(self):
+        audio = self._audio_actual()
+        self.reproductor.cargar(audio)
+        self.vista_onda.set_audio(audio)
+        self.timer_play.stop()
+        self.transporte.set_reproduciendo(False)
+        self.transporte.set_tiempo(0, self.reproductor.duracion)
+
+    def _on_play_pausa(self):
+        if self.reproductor.activo:
+            self.reproductor.pausa()
+            self.timer_play.stop()
+            self.transporte.set_reproduciendo(False)
+        else:
+            if self.reproductor.duracion <= 0:
+                return
+            self.reproductor.reproducir()
+            self.timer_play.start()
+            self.transporte.set_reproduciendo(True)
+
+    def _on_stop(self):
+        self.reproductor.detener()
+        self.timer_play.stop()
+        self.transporte.set_reproduciendo(False)
+        self.vista_onda.set_pos(0.0)
+        self.transporte.set_tiempo(0, self.reproductor.duracion)
+
+    def _on_fuente(self, idx):
+        self.fuente_idx = idx
+        self.reproductor.detener()
+        self._cargar_fuente_en_reproductor()
+        self.vista_onda.set_pos(0.0)
+
+    def _on_volumen(self, v):
+        self.reproductor.ganancia = v
+
+    def _on_seek(self, segundos):
+        self.reproductor.seek(segundos)
+        self.vista_onda.set_pos(segundos)
+        self.transporte.set_tiempo(segundos, self.reproductor.duracion)
+
+    def _tick_play(self):
+        seg = self.reproductor.segundos()
+        self.vista_onda.set_pos(seg)
+        self.transporte.set_tiempo(seg, self.reproductor.duracion)
+        if not self.reproductor.activo:        # terminó solo al llegar al final
+            self.timer_play.stop()
+            self.transporte.set_reproduciendo(False)
 
     def al_guardar(self):
         if self.audio_procesado is None:
@@ -739,10 +814,8 @@ class AutotuneStudio(QWidget):
             self._verificar_reemplazo()
 
     def _habilitar_resultado(self, on):
-        self.btn_play_proc.setEnabled(on)
         self.btn_guardar.setEnabled(on)
-        self.btn_play_orig.setEnabled(self.audio_original is not None)
-        self.btn_stop.setEnabled(True)
+        self._refrescar_fuentes()
 
     # --------------------------------------------------------------------- #
     # Estilo (QSS)
@@ -796,6 +869,16 @@ class AutotuneStudio(QWidget):
             #procesar:disabled { background-color: #353147; color: #888; }
             #play { background-color: #1e8e5a; border: none; color: white; }
             #play:hover { background-color: #25a868; }
+            #transporte {
+                background-color: #6c5ce7; border: none; color: white;
+                font-size: 18px; font-weight: 800; padding: 8px;
+            }
+            #transporte:hover { background-color: #7d6ef0; }
+            #transporte:disabled { background-color: #353147; color: #888; }
+            #tiempo {
+                color: #cfd3dc; font-size: 13px;
+                font-family: 'Consolas', monospace;
+            }
             QComboBox {
                 background-color: #262a33;
                 border: 1px solid #343945;
