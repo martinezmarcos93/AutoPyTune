@@ -121,19 +121,27 @@ def afinar(audio, tonica="C", escala="Mayor", fuerza=1.0, suavizado=0.0,
 # --------------------------------------------------------------------------- #
 # Pulido
 # --------------------------------------------------------------------------- #
-def pulir(audio, reverb=0.25, brillo=3.0, sr=SR):
+def pulir(audio, reverb=0.25, brillo=3.0, sr=SR,
+          highpass_hz=80.0, peak_gain_db=-2.0,
+          comp_umbral_db=-20.0, comp_ratio=4.0):
     """
-    Cadena de mezcla de voz:
-      - paso alto: quita retumbe grave
-      - peak -2 dB @ 300 Hz: saca el sonido "encajonado" de cuartos sin acústica
-      - compresor: nivela el volumen
-      - high shelf @ 10 kHz: 'aire'/brillo de estudio (controlado por 'brillo')
-      - reverb: espacio
+    Cadena de mezcla de voz (rack de efectos, Incremento C):
+      - paso alto: quita retumbe grave            (highpass_hz)
+      - peak @ 300 Hz: saca el sonido "encajonado" de cuartos  (peak_gain_db)
+      - compresor: nivela el volumen              (comp_umbral_db, comp_ratio)
+      - high shelf @ 10 kHz: 'aire'/brillo de estudio          (brillo)
+      - reverb: espacio                           (reverb)
+
+    Los defaults son los valores que estaban hardcodeados antes de C: con los
+    valores por omisión la salida es idéntica a la anterior (retrocompatible).
+    Quedan fijos (alcance curado): peak freq/Q, comp attack/release, shelf freq,
+    reverb room_size.
     """
     board = Pedalboard([
-        HighpassFilter(cutoff_frequency_hz=80),
-        PeakFilter(cutoff_frequency_hz=300, gain_db=-2.0, q=1.0),
-        Compressor(threshold_db=-20, ratio=4, attack_ms=5, release_ms=120),
+        HighpassFilter(cutoff_frequency_hz=highpass_hz),
+        PeakFilter(cutoff_frequency_hz=300, gain_db=peak_gain_db, q=1.0),
+        Compressor(threshold_db=comp_umbral_db, ratio=comp_ratio,
+                   attack_ms=5, release_ms=120),
         HighShelfFilter(cutoff_frequency_hz=10000, gain_db=brillo),
         Reverb(room_size=0.4, wet_level=reverb, dry_level=1 - reverb * 0.5),
     ])
@@ -146,13 +154,18 @@ def normalizar(audio, pico=0.95):
 
 
 def procesar(audio, tonica, escala, fuerza, reverb, suavizado=0.0, brillo=3.0,
-             sr=SR, progreso=None):
+             sr=SR, progreso=None,
+             highpass_hz=80.0, peak_gain_db=-2.0,
+             comp_umbral_db=-20.0, comp_ratio=4.0):
     """Pipeline completo: afinar + pulir + normalizar."""
     afinado = np.nan_to_num(
         afinar(audio, tonica, escala, fuerza, suavizado, sr, progreso))
     if progreso:
         progreso("Puliendo (EQ + compresión + reverb)...", 90)
-    final = normalizar(pulir(afinado, reverb, brillo, sr))
+    final = normalizar(pulir(
+        afinado, reverb, brillo, sr,
+        highpass_hz=highpass_hz, peak_gain_db=peak_gain_db,
+        comp_umbral_db=comp_umbral_db, comp_ratio=comp_ratio))
     if progreso:
         progreso("Listo.", 100)
     return final
@@ -274,7 +287,9 @@ def mezclar(voz, instrumental, ganancia_voz=1.0, ganancia_inst=0.9):
 def reemplazar_voz(ruta_suno, ruta_mi_voz, tonica, escala, fuerza, reverb,
                    suavizado=0.0, brillo=3.0,
                    ganancia_voz=1.1, ganancia_inst=0.9, alinear=True,
-                   sr=SR, progreso=None):
+                   sr=SR, progreso=None,
+                   highpass_hz=80.0, peak_gain_db=-2.0,
+                   comp_umbral_db=-20.0, comp_ratio=4.0):
     """
     1. Separa voz IA + instrumental del archivo de Suno.
     2. Carga tu voz y (opcional) la alinea a la duración de la voz original.
@@ -301,7 +316,10 @@ def reemplazar_voz(ruta_suno, ruta_mi_voz, tonica, escala, fuerza, reverb,
 
     if progreso:
         progreso("Puliendo voz...", 86)
-    voz_pulida = normalizar(pulir(voz_afinada, reverb, brillo, sr=sr))
+    voz_pulida = normalizar(pulir(
+        voz_afinada, reverb, brillo, sr=sr,
+        highpass_hz=highpass_hz, peak_gain_db=peak_gain_db,
+        comp_umbral_db=comp_umbral_db, comp_ratio=comp_ratio))
 
     if progreso:
         progreso("Mezclando con el instrumental...", 95)

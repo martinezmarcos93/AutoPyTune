@@ -74,7 +74,8 @@ class ProcesoThread(QThread):
     terminado = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, audio, tonica, escala, fuerza, reverb, suavizado, brillo):
+    def __init__(self, audio, tonica, escala, fuerza, reverb, suavizado, brillo,
+                 pulido=None):
         super().__init__()
         self.audio = audio
         self.tonica = tonica
@@ -83,6 +84,7 @@ class ProcesoThread(QThread):
         self.reverb = reverb
         self.suavizado = suavizado
         self.brillo = brillo
+        self.pulido = pulido or {}
 
     def run(self):
         try:
@@ -90,6 +92,7 @@ class ProcesoThread(QThread):
                 self.audio, self.tonica, self.escala, self.fuerza, self.reverb,
                 suavizado=self.suavizado, brillo=self.brillo,
                 progreso=lambda msg, pct: self.progreso.emit(msg, pct),
+                **self.pulido,
             )
             self.terminado.emit(final)
         except Exception as e:
@@ -104,7 +107,8 @@ class ProcesoSunoThread(QThread):
     error = pyqtSignal(str)
 
     def __init__(self, ruta_suno, ruta_mi_voz, tonica, escala, fuerza,
-                 reverb, suavizado, brillo, ganancia_voz, ganancia_inst, alinear):
+                 reverb, suavizado, brillo, ganancia_voz, ganancia_inst, alinear,
+                 pulido=None):
         super().__init__()
         self.ruta_suno = ruta_suno
         self.ruta_mi_voz = ruta_mi_voz
@@ -117,6 +121,7 @@ class ProcesoSunoThread(QThread):
         self.ganancia_voz = ganancia_voz
         self.ganancia_inst = ganancia_inst
         self.alinear = alinear
+        self.pulido = pulido or {}
 
     def run(self):
         try:
@@ -127,6 +132,7 @@ class ProcesoSunoThread(QThread):
                 ganancia_voz=self.ganancia_voz, ganancia_inst=self.ganancia_inst,
                 alinear=self.alinear,
                 progreso=lambda msg, pct: self.progreso.emit(msg, pct),
+                **self.pulido,
             )
             self.terminado.emit(final)
         except Exception as e:
@@ -394,6 +400,43 @@ class AutotuneStudio(QWidget):
         grid.addWidget(self.sl_brillo, 4, 1, 1, 2)
         grid.addWidget(self.lbl_brillo, 4, 3)
 
+        # ---- Rack de pulido (Incremento C): EQ + compresor parametrizables ----
+        sub = QLabel("PULIDO")
+        sub.setObjectName("seccion")
+        grid.addWidget(sub, 5, 0, 1, 4)
+
+        self.sl_graves = self._slider(20, 200, 80)   # paso alto, Hz
+        self.lbl_graves = QLabel("80 Hz")
+        self.sl_graves.valueChanged.connect(
+            lambda v: self.lbl_graves.setText(f"{v} Hz"))
+        grid.addWidget(QLabel("Graves"), 6, 0)
+        grid.addWidget(self.sl_graves, 6, 1, 1, 2)
+        grid.addWidget(self.lbl_graves, 6, 3)
+
+        self.sl_cuerpo = self._slider(-6, 6, -2)     # peak @300 Hz, dB
+        self.lbl_cuerpo = QLabel("-2 dB")
+        self.sl_cuerpo.valueChanged.connect(
+            lambda v: self.lbl_cuerpo.setText(f"{v:+d} dB"))
+        grid.addWidget(QLabel("Cuerpo"), 7, 0)
+        grid.addWidget(self.sl_cuerpo, 7, 1, 1, 2)
+        grid.addWidget(self.lbl_cuerpo, 7, 3)
+
+        self.sl_comp_umbral = self._slider(-40, 0, -20)   # compresor, dB
+        self.lbl_comp_umbral = QLabel("-20 dB")
+        self.sl_comp_umbral.valueChanged.connect(
+            lambda v: self.lbl_comp_umbral.setText(f"{v} dB"))
+        grid.addWidget(QLabel("Compresor"), 8, 0)
+        grid.addWidget(self.sl_comp_umbral, 8, 1, 1, 2)
+        grid.addWidget(self.lbl_comp_umbral, 8, 3)
+
+        self.sl_comp_ratio = self._slider(1, 10, 4)       # compresor, ratio
+        self.lbl_comp_ratio = QLabel("4:1")
+        self.sl_comp_ratio.valueChanged.connect(
+            lambda v: self.lbl_comp_ratio.setText(f"{v}:1"))
+        grid.addWidget(QLabel("Ratio"), 9, 0)
+        grid.addWidget(self.sl_comp_ratio, 9, 1, 1, 2)
+        grid.addWidget(self.lbl_comp_ratio, 9, 3)
+
         # Que la columna de los sliders sea la que se estire.
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(2, 1)
@@ -650,6 +693,7 @@ class AutotuneStudio(QWidget):
             self.sl_gan_voz.value() / 100.0,
             self.sl_gan_inst.value() / 100.0,
             self.chk_alinear.isChecked(),
+            pulido=self._params_pulido(),
         )
         self.proceso_suno.progreso.connect(self.actualizar_progreso)
         self.proceso_suno.terminado.connect(self.reemplazo_listo)
@@ -744,6 +788,15 @@ class AutotuneStudio(QWidget):
         self.barra.setFormat("✓ Análisis listo")
         QMessageBox.information(self, "Ficha técnica", texto)
 
+    def _params_pulido(self):
+        """Lee los sliders del rack de pulido (Incremento C) como kwargs de pulir()."""
+        return {
+            "highpass_hz": float(self.sl_graves.value()),
+            "peak_gain_db": float(self.sl_cuerpo.value()),
+            "comp_umbral_db": float(self.sl_comp_umbral.value()),
+            "comp_ratio": float(self.sl_comp_ratio.value()),
+        }
+
     def al_procesar(self):
         if self.audio_original is None:
             return
@@ -757,6 +810,7 @@ class AutotuneStudio(QWidget):
             self.sl_reverb.value() / 100.0,
             self.sl_suave.value() / 100.0,
             float(self.sl_brillo.value()),
+            pulido=self._params_pulido(),
         )
         self.proceso.progreso.connect(self.actualizar_progreso)
         self.proceso.terminado.connect(self.proceso_listo)
