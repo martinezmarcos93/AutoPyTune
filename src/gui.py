@@ -16,7 +16,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QComboBox, QSlider,
     QFileDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
-    QProgressBar, QMessageBox, QCheckBox, QScrollArea,
+    QProgressBar, QMessageBox, QCheckBox, QScrollArea, QStackedWidget,
 )
 
 import audio_engine as eng
@@ -233,42 +233,93 @@ class AutotuneStudio(QWidget):
     # Construcción de la interfaz
     # --------------------------------------------------------------------- #
     def _construir_ui(self):
-        # La ventana solo contiene un área con scroll; así, aunque esté chica o
-        # haya muchas tarjetas, el contenido nunca se aplasta: se desplaza.
-        externo = QVBoxLayout(self)
-        externo.setContentsMargins(0, 0, 0, 0)
+        # Layout en pipeline (Incremento B del rediseño DAW): cabecera fija arriba,
+        # sidebar de etapas + panel central que cambia según la etapa, y el
+        # reproductor fijo abajo (siempre visible). Reemplaza el scroll único con
+        # las 5 tarjetas apiladas del Incremento A.
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        scroll = QScrollArea()
-        scroll.setObjectName("scroll")
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        externo.addWidget(scroll)
-
-        # El contenido se centra en una columna de ancho acotado para que se vea
-        # bien también a pantalla completa.
-        envoltura = QWidget()
-        env_layout = QHBoxLayout(envoltura)
-        env_layout.setContentsMargins(0, 0, 0, 0)
-        env_layout.addStretch(1)
-
-        columna = QWidget()
-        columna.setMaximumWidth(960)
-        root = QVBoxLayout(columna)
-        root.setContentsMargins(28, 24, 28, 24)
-        root.setSpacing(18)
-
-        env_layout.addWidget(columna, 6)
-        env_layout.addStretch(1)
-        scroll.setWidget(envoltura)
-
-        # ---- Cabecera ----
+        # ---- Cabecera (fija arriba) ----
+        cabecera = QWidget()
+        cabecera.setObjectName("cabecera")
+        cab = QVBoxLayout(cabecera)
+        cab.setContentsMargins(28, 18, 28, 14)
+        cab.setSpacing(2)
         titulo = QLabel("🎙  AUTOTUNE STUDIO")
         titulo.setObjectName("titulo")
         subtitulo = QLabel("Grabá tu voz · afinala · pulila · reemplazá la voz de Suno")
         subtitulo.setObjectName("subtitulo")
-        root.addWidget(titulo)
-        root.addWidget(subtitulo)
+        cab.addWidget(titulo)
+        cab.addWidget(subtitulo)
+        root.addWidget(cabecera)
 
+        # ---- Medio: sidebar de etapas + panel central ----
+        medio = QHBoxLayout()
+        medio.setContentsMargins(0, 0, 0, 0)
+        medio.setSpacing(0)
+        medio.addWidget(self._construir_sidebar())
+
+        self.paginas = QStackedWidget()
+        self.paginas.addWidget(self._envolver_scroll(self._pagina_fuente()))
+        self.paginas.addWidget(self._envolver_scroll(self._pagina_afinar()))
+        self.paginas.addWidget(self._envolver_scroll(self._pagina_mezclar()))
+        self.paginas.addWidget(self._envolver_scroll(self._pagina_herramientas()))
+        medio.addWidget(self.paginas, 1)
+        root.addLayout(medio, 1)
+
+        # ---- Reproductor fijo (abajo, siempre visible) ----
+        root.addWidget(self._construir_reproductor())
+
+        self._habilitar_resultado(False)
+        self._ir_a_etapa(0)
+
+    # --------------------------------------------------------------------- #
+    # Sidebar de etapas + páginas del panel central
+    # --------------------------------------------------------------------- #
+    def _construir_sidebar(self):
+        barra = QWidget()
+        barra.setObjectName("sidebar")
+        barra.setFixedWidth(190)
+        v = QVBoxLayout(barra)
+        v.setContentsMargins(12, 18, 12, 18)
+        v.setSpacing(8)
+
+        self.botones_etapa = []
+        for i, texto in enumerate(
+                ("①  Fuente", "②  Afinar", "③  Mezclar", "④  Herramientas")):
+            b = QPushButton(texto)
+            b.setObjectName("etapa")
+            b.setCheckable(True)
+            b.setMinimumHeight(46)
+            b.clicked.connect(lambda _, idx=i: self._ir_a_etapa(idx))
+            v.addWidget(b)
+            self.botones_etapa.append(b)
+        v.addStretch()
+        return barra
+
+    def _ir_a_etapa(self, idx):
+        self.paginas.setCurrentIndex(idx)
+        for i, b in enumerate(self.botones_etapa):
+            b.setChecked(i == idx)
+
+    def _envolver_scroll(self, contenido):
+        """Mete una página en un área con scroll para que las etapas altas
+        (Afinar, Mezclar) no se aplasten en pantallas chicas."""
+        scroll = QScrollArea()
+        scroll.setObjectName("scroll")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        envoltura = QWidget()
+        lay = QVBoxLayout(envoltura)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.addWidget(contenido)
+        lay.addStretch()
+        scroll.setWidget(envoltura)
+        return scroll
+
+    def _pagina_fuente(self):
         # ---- Tarjeta: Fuente de audio ----
         fuente = self._tarjeta("1 · Fuente de audio")
         fl = QHBoxLayout()
@@ -291,8 +342,9 @@ class AutotuneStudio(QWidget):
         self.lbl_fuente.setObjectName("estado")
         self.lbl_fuente.setWordWrap(True)
         fuente.layout().addWidget(self.lbl_fuente)
-        root.addWidget(fuente)
+        return fuente
 
+    def _pagina_afinar(self):
         # ---- Tarjeta: Afinación ----
         ajustes = self._tarjeta("2 · Afinación")
         grid = QGridLayout()
@@ -353,8 +405,9 @@ class AutotuneStudio(QWidget):
         self.btn_procesar.setEnabled(False)
         self.btn_procesar.clicked.connect(self.al_procesar)
         ajustes.layout().addWidget(self.btn_procesar)
-        root.addWidget(ajustes)
+        return ajustes
 
+    def _pagina_mezclar(self):
         # ---- Tarjeta: Reemplazar voz de Suno ----
         suno = self._tarjeta("3 · Reemplazar voz de Suno")
         sl = QVBoxLayout()
@@ -413,8 +466,9 @@ class AutotuneStudio(QWidget):
         sl.addWidget(self.btn_reemplazar)
 
         suno.layout().addLayout(sl)
-        root.addWidget(suno)
+        return suno
 
+    def _pagina_herramientas(self):
         # ---- Tarjeta: Herramientas ----
         herr = self._tarjeta("4 · Herramientas")
         hg = QGridLayout()
@@ -437,35 +491,40 @@ class AutotuneStudio(QWidget):
         hg.addWidget(self.btn_separar_lote, 0, 1)
         hg.addWidget(self.btn_analizar, 1, 0, 1, 2)
         herr.layout().addLayout(hg)
-        root.addWidget(herr)
+        return herr
 
-        # ---- Barra de progreso ----
-        self.barra = QProgressBar()
-        self.barra.setValue(0)
-        self.barra.setTextVisible(True)
-        root.addWidget(self.barra)
+    def _construir_reproductor(self):
+        """Panel fijo inferior: forma de onda + transporte + progreso + guardar.
+        Siempre visible, sin importar la etapa activa (feel de DAW)."""
+        panel = QWidget()
+        panel.setObjectName("reproductor_fijo")
+        v = QVBoxLayout(panel)
+        v.setContentsMargins(20, 12, 20, 14)
+        v.setSpacing(10)
 
-        # ---- Reproductor (waveform + transporte) ----
-        reproductor = self._tarjeta("5 · Reproductor")
         self.vista_onda = VistaOnda(eng.SR)
         self.vista_onda.seek_solicitado.connect(self._on_seek)
-        reproductor.layout().addWidget(self.vista_onda)
+        v.addWidget(self.vista_onda)
 
         self.transporte = BarraTransporte()
         self.transporte.play_pausa.connect(self._on_play_pausa)
         self.transporte.stop.connect(self._on_stop)
         self.transporte.fuente_cambiada.connect(self._on_fuente)
         self.transporte.volumen_cambiado.connect(self._on_volumen)
-        reproductor.layout().addWidget(self.transporte)
+        v.addWidget(self.transporte)
+
+        fila = QHBoxLayout()
+        self.barra = QProgressBar()
+        self.barra.setValue(0)
+        self.barra.setTextVisible(True)
+        fila.addWidget(self.barra, 1)
 
         self.btn_guardar = QPushButton("💾  Guardar resultado")
-        self.btn_guardar.setMinimumHeight(42)
+        self.btn_guardar.setMinimumHeight(38)
         self.btn_guardar.clicked.connect(self.al_guardar)
-        reproductor.layout().addWidget(self.btn_guardar)
-        root.addWidget(reproductor)
-
-        self._habilitar_resultado(False)
-        root.addStretch()
+        fila.addWidget(self.btn_guardar)
+        v.addLayout(fila)
+        return panel
 
     def _tarjeta(self, titulo):
         marco = QFrame()
@@ -829,6 +888,33 @@ class AutotuneStudio(QWidget):
                 font-size: 14px;
             }
             QScrollArea, #scroll { border: none; background-color: #15171c; }
+            #cabecera {
+                background-color: #1a1d24;
+                border-bottom: 1px solid #2a2e38;
+            }
+            #sidebar {
+                background-color: #181b21;
+                border-right: 1px solid #2a2e38;
+            }
+            #etapa {
+                background-color: transparent;
+                border: 1px solid transparent;
+                text-align: left;
+                padding: 11px 14px;
+                font-size: 14px;
+                font-weight: 600;
+                color: #9aa0b0;
+            }
+            #etapa:hover { background-color: #21252d; color: #e6e8ec; }
+            #etapa:checked {
+                background-color: #262147;
+                border: 1px solid #6c5ce7;
+                color: #ffffff;
+            }
+            #reproductor_fijo {
+                background-color: #1a1d24;
+                border-top: 1px solid #2a2e38;
+            }
             #titulo {
                 font-size: 26px;
                 font-weight: 800;
