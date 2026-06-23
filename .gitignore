@@ -30,6 +30,8 @@ docs/Letras.docx
 *.docx
 docs/analisis_temas.md
 docs/designs/
+docs/ROADMAP.md
+docs/colab/
 
 # Sistema
 .DS_Store
