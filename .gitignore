@@ -33,6 +33,11 @@ docs/designs/
 docs/ROADMAP.md
 docs/colab/
 
+# Letras y datos de karaoke (texto de las canciones — no se publican)
+data/ZZZ-Letras/
+data/07_karaoke/
+spikes/karaoke/salida/
+
 # Sistema
 .DS_Store
 Thumbs.db
