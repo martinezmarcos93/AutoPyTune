@@ -42,10 +42,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIR_SALIDA = os.path.join(ROOT, "data", "07_karaoke")
 RUTA_ORIGINALES = os.path.join(DIR_SALIDA, "LETRAS COMPLETAS ORIGINALES.txt")
 
-# Umbral de similitud para aceptar que un segmento ASR es un verso del original.
-UMBRAL_MATCH = 0.55
-# Por debajo de esto, un segmento sin match se trata como BASURA (no ad-lib).
-UMBRAL_BASURA = 0.30
+# Umbral de similitud para aceptar que un segmento ASR canta un verso (o varios
+# versos contiguos) del original. Si lo supera, se emite el verso ORIGINAL completo
+# (verbatim), no el texto del ASR. Moderado porque el ASR sobre voz cantada trae
+# errores, pero el original es la fuente de la verdad.
+UMBRAL_VERSO = 0.45
+# Máximo de versos contiguos que un solo segmento ASR puede abarcar.
+MAX_VERSOS_SEG = 8
 
 
 def _sin_acentos(texto):
@@ -111,27 +114,29 @@ def _segmentos_asr(ruta_txt, palabras_json):
     return segmentos
 
 
-def _mejor_tramo(seg_tokens, orig_tokens):
-    """Mejor ventana contigua de orig_tokens que matchea seg_tokens.
+def _mejor_run_versos(seg_tokens, versos_tokens):
+    """Mejor corrida contigua de VERSOS enteros del original que matchea el segmento.
 
-    Devuelve (ratio, ini, fin) sobre indices de orig_tokens. Permite reusar tramos
-    (cada segmento se evalua contra todo el original) -> las repeticiones salen solas.
+    Devuelve (ratio, inicio_verso, cantidad). Se prueba contra todo el original y
+    se permite reusar versos -> las repeticiones del canto salen solas. Encajar a
+    versos enteros (no a ventanas arbitrarias) evita emitir fragmentos: la salida
+    siempre son versos ORIGINALES completos.
     """
-    L = len(seg_tokens)
-    if L == 0 or not orig_tokens:
+    if not seg_tokens or not versos_tokens:
         return 0.0, 0, 0
     mejor = (0.0, 0, 0)
     sm = SequenceMatcher()
     sm.set_seq2(seg_tokens)
-    # Probar ventanas de tamaño 0.6L .. 1.6L en cada posicion del original.
-    tam_min = max(1, int(L * 0.6))
-    tam_max = min(len(orig_tokens), int(L * 1.6) + 1)
-    for tam in range(tam_min, tam_max + 1):
-        for ini in range(0, len(orig_tokens) - tam + 1):
-            sm.set_seq1(orig_tokens[ini: ini + tam])
+    nv = len(versos_tokens)
+    for s in range(nv):
+        cand = []
+        tope = min(MAX_VERSOS_SEG, nv - s)
+        for k in range(1, tope + 1):
+            cand = cand + versos_tokens[s + k - 1]
+            sm.set_seq1(cand)
             r = sm.ratio()
             if r > mejor[0]:
-                mejor = (r, ini, ini + tam)
+                mejor = (r, s, k)
     return mejor
 
 
@@ -180,47 +185,53 @@ def reconciliar_tema(num, ruta_txt, ruta_json, versos):
         palabras = json.load(f)
     segmentos = _segmentos_asr(ruta_txt, palabras)
 
-    # Tokens normalizados del original (planos) + de donde viene cada token (verso).
-    orig_tokens = []
-    for v in versos:
-        orig_tokens.extend(_tokens_norm(v))
-    orig_palabras = []           # palabras originales "para mostrar"
-    for v in versos:
-        orig_palabras.extend(v.split())
+    # Cada verso del original = unidad atómica. La salida se compone SOLO de versos
+    # originales completos (verbatim); del ASR sale únicamente la secuencia/repeticiones.
+    versos_tokens = [_tokens_norm(v) for v in versos]
 
     lineas_out = []
     palabras_out = []
-    cubiertos = set()            # indices de orig_tokens que aparecieron (cobertura)
+    cubiertos = set()            # índices de versos que aparecieron (cobertura)
     flags = []                   # (n_linea, motivo, texto)
 
     for i, seg in enumerate(segmentos):
         seg_tokens = _tokens_norm(seg["texto"])
-        ratio, ini, fin = _mejor_tramo(seg_tokens, orig_tokens)
+        if not seg_tokens:
+            flags.append((i + 1, "BASURA descartada (sin palabras)", seg["texto"]))
+            continue
 
-        if ratio >= UMBRAL_MATCH:
-            tramo = orig_palabras[ini:fin]
-            texto_final = " ".join(tramo)
-            lineas_out.append(texto_final)
-            palabras_out.extend(_interpolar_tiempos(tramo, seg["inicio"], seg["fin"]))
-            for j in range(ini, fin):
+        ratio, s, k = _mejor_run_versos(seg_tokens, versos_tokens)
+
+        if ratio >= UMBRAL_VERSO:
+            # El segmento canta estos versos -> emitir el ORIGINAL completo, un
+            # verso por línea, y repartir los tiempos del segmento entre sus palabras.
+            tramo = versos[s:s + k]
+            destino = []
+            for v in tramo:
+                lineas_out.append(v.strip())
+                destino.extend(v.split())
+            palabras_out.extend(
+                _interpolar_tiempos(destino, seg["inicio"], seg["fin"]))
+            for j in range(s, s + k):
                 cubiertos.add(j)
-        elif _es_basura(seg["texto"]) and ratio < UMBRAL_BASURA:
-            # Basura/alucinacion: se descarta del texto final, se reporta.
+        elif _es_basura(seg["texto"]):
+            # Símbolos/alucinación (incl. scripts no latinos): se descarta.
             flags.append((i + 1, f"BASURA descartada (sim {ratio:.2f})", seg["texto"]))
         else:
-            # Ad-lib real o duda: se conserva tal cual y se marca para el oido de Marcos.
+            # Ad-lib corto (¡Vamos!, Eternidad, Ruh) o verso muy distorsionado: se
+            # conserva tal cual y se marca para el oído de Marcos (no se inventa).
             lineas_out.append(f"{seg['texto']}    [REVISAR]")
             palabras_out.extend(seg["palabras"])
             flags.append((i + 1, f"AD-LIB/DUDA conservado (sim {ratio:.2f})", seg["texto"]))
 
-    total_orig = len(orig_tokens)
-    cobertura = (len(cubiertos) / total_orig) if total_orig else 0.0
+    total = len(versos)
+    cobertura = (len(cubiertos) / total) if total else 0.0
     reporte = {
         "tema": num,
         "segmentos": len(segmentos),
         "cobertura": cobertura,
-        "tokens_cubiertos": len(cubiertos),
-        "tokens_original": total_orig,
+        "versos_cubiertos": len(cubiertos),
+        "versos_original": total,
         "flags": flags,
     }
     return lineas_out, palabras_out, reporte
@@ -272,7 +283,7 @@ def procesar_todos(numeros=None, sobreescribir=True):
 
         print(f"\n[i] Tema {num} ({base}): {rep['segmentos']} segmentos, "
               f"cobertura {rep['cobertura']*100:.0f}% "
-              f"({rep['tokens_cubiertos']}/{rep['tokens_original']} palabras del original)")
+              f"({rep['versos_cubiertos']}/{rep['versos_original']} versos del original)")
         for n_lin, motivo, texto in rep["flags"]:
             recorte = texto if len(texto) <= 60 else texto[:57] + "..."
             print(f"    L{n_lin:>2} {motivo}: {recorte}")
