@@ -70,17 +70,31 @@ class Reproductor:
         self.stream.start()
 
     def pausa(self):
-        """Detiene el stream conservando la posición (para reanudar)."""
-        if self.stream is not None:
-            self.stream.stop()
-            self.stream.close()
-            self.stream = None
+        """Detiene el stream conservando la posición (para reanudar).
+
+        `stream.stop()` puede disparar el finished_callback (`_al_terminar`) en
+        otro hilo, que anula `self.stream`. Por eso se toma una referencia local
+        y se anula el atributo ANTES de cerrar: quien llegue segundo ve None y no
+        hace nada (evita el AttributeError por doble cierre / carrera).
+        """
+        stream = self.stream
+        self.stream = None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
 
     def _al_terminar(self):
         # corre en el hilo de audio al agotarse el audio (CallbackStop)
-        if self.stream is not None:
-            self.stream.close()
-            self.stream = None
+        stream = self.stream
+        self.stream = None
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
 
     def detener(self):
         """Para y vuelve la posición al inicio."""
