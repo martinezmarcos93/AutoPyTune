@@ -8,6 +8,13 @@ psola
 pedalboard
 scipy
 
+# --- karaoke: alineación letra↔audio (ASR offline) ---
+# faster-whisper (CTranslate2, CPU, MIT) transcribe la voz extraída con
+# timestamps por palabra. truststore usa el trust store de Windows para que
+# la descarga del modelo desde HuggingFace no falle con el SSL del antivirus.
+faster-whisper
+truststore
+
 # --- separación de voz / instrumental (Demucs) ---
 demucs
 torch

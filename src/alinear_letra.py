@@ -107,15 +107,24 @@ def transcribir(modelo, audio, prompt=None, condicionar=True):
     return lineas, palabras
 
 
-def alinear_tema(modelo, ruta_voz, prompt=None):
-    """Procesa una voz y escribe NN-Tema.txt + NN-Tema.json. Devuelve la base."""
+def alinear_tema(modelo, ruta_voz, prompt=None, forzar_completo=False):
+    """Procesa una voz y escribe NN-Tema.txt + NN-Tema.json. Devuelve la base.
+
+    `forzar_completo` arranca con condition_on_previous_text=False (modo
+    completitud): empeora la ortografia pero evita que Whisper colapse y se coma
+    estrofas. Como la ortografia se corrige luego contra el original (reconciliar_letra),
+    conviene para los temas donde el ASR colapso (ej. 01/06/07).
+    """
     base = os.path.basename(ruta_voz)
     base = base[: -len(".wav")] if base.lower().endswith(".wav") else base
     if base.endswith(SUFIJO_VOZ):
         base = base[: -len(SUFIJO_VOZ)]
 
     audio = _clip_normalizado(ruta_voz)
-    lineas, palabras = transcribir(modelo, audio, prompt)
+    if forzar_completo:
+        lineas, palabras = transcribir(modelo, audio, prompt, condicionar=False)
+    else:
+        lineas, palabras = transcribir(modelo, audio, prompt)
 
     # Red de seguridad: si salió degenerado (Whisper colapsa y devuelve basura;
     # ej.: muy pocas palabras pese a haber voz), reintentar sin prompt y sin
@@ -141,8 +150,11 @@ def _numero_de(nombre):
     return int(m.group(1)) if m else None
 
 
-def procesar_todos(numeros=None):
-    """Transcribe todas las voces (o solo los números pedidos)."""
+def procesar_todos(numeros=None, completo=False):
+    """Transcribe todas las voces (o solo los números pedidos).
+
+    `completo` fuerza el modo completitud (ver alinear_tema) en todos los pedidos.
+    """
     if not os.path.isdir(DIR_VOCES):
         print("[X] No existe", DIR_VOCES)
         return
@@ -160,8 +172,10 @@ def procesar_todos(numeros=None):
             continue
         ruta = os.path.join(DIR_VOCES, nombre)
         prompt = secciones.get(num)
-        print(f"[i] Transcribiendo {nombre} (tema {num})...")
-        base, n_pal, n_lin = alinear_tema(modelo, ruta, prompt)
+        modo = " [completitud]" if completo else ""
+        print(f"[i] Transcribiendo {nombre} (tema {num}){modo}...")
+        base, n_pal, n_lin = alinear_tema(modelo, ruta, prompt,
+                                          forzar_completo=completo)
         print(f"    ✓ {base}: {n_pal} palabras, {n_lin} segmentos "
               f"-> data/07_karaoke/{base}.txt + .json")
 
@@ -170,4 +184,5 @@ def procesar_todos(numeros=None):
 
 if __name__ == "__main__":
     pedidos = {int(a) for a in sys.argv[1:] if a.isdigit()} or None
-    procesar_todos(pedidos)
+    completo = "completo" in (a.lower() for a in sys.argv[1:])
+    procesar_todos(pedidos, completo=completo)
