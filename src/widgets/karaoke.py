@@ -20,6 +20,9 @@ from PyQt6.QtWidgets import QTextEdit
 # Silencio (en s) entre el fin de una palabra y el inicio de la siguiente a
 # partir del cual se mete un salto de línea (corte de frase/verso).
 GAP_LINEA = 0.7
+# Gracia (en s) tras el fin de una palabra antes de apagar su resaltado: en los
+# interludios instrumentales largos (sin canto) no queda ninguna palabra "pegada".
+GRACIA_FIN = 1.5
 # Largo máximo aproximado de línea antes de cortar igual (legibilidad).
 MAX_CHARS_LINEA = 52
 
@@ -95,6 +98,12 @@ class VistaKaraoke(QTextEdit):
             return
         # Última palabra cuyo inicio <= segundos.
         idx = bisect_right(self._inicios, segundos) - 1
+        # Si ya pasó el fin de esa palabra + gracia, estamos en un hueco
+        # (instrumental/silencio): no resaltar nada hasta la próxima palabra.
+        if 0 <= idx < len(self._palabras):
+            fin = self._palabras[idx].get("fin")
+            if fin is not None and segundos > fin + GRACIA_FIN:
+                idx = -1
         if idx == self._activa:
             return
         self._activa = idx
