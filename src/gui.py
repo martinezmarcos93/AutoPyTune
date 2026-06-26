@@ -9,7 +9,9 @@ Requisitos:
 """
 
 import os
+import re
 import sys
+import json
 import numpy as np
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
@@ -23,11 +25,16 @@ import audio_engine as eng
 from widgets.reproductor import Reproductor
 from widgets.waveform import VistaOnda
 from widgets.transporte import BarraTransporte
+from widgets.karaoke import VistaKaraoke
 
 # Rutas del proyecto (gui.py vive en src/, los datos en ../data/).
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIR_ORIGINALES = os.path.join(ROOT, "data", "00_originales")
 DIR_INSTRUMENTALES = os.path.join(ROOT, "data", "01_instrumentales")
+DIR_KARAOKE = os.path.join(ROOT, "data", "07_karaoke")
+
+# Índice de la etapa Karaoke en el sidebar/QStackedWidget.
+ETAPA_KARAOKE = 3
 
 
 # --------------------------------------------------------------------------- #
@@ -221,6 +228,10 @@ class AutotuneStudio(QWidget):
         self.reproductor = Reproductor(eng.SR)
         self.fuente_idx = 0          # 0 = original, 1 = resultado
 
+        # Karaoke: el instrumental se reproduce y la letra se resalta por tiempo.
+        self.audio_karaoke = None
+        self._karaoke_activo = False
+
         # Timer para mostrar el tiempo de grabación en vivo.
         self.timer_grab = QTimer(self)
         self.timer_grab.timeout.connect(self._tic_grabacion)
@@ -271,6 +282,7 @@ class AutotuneStudio(QWidget):
         self.paginas.addWidget(self._envolver_scroll(self._pagina_fuente()))
         self.paginas.addWidget(self._envolver_scroll(self._pagina_afinar()))
         self.paginas.addWidget(self._envolver_scroll(self._pagina_mezclar()))
+        self.paginas.addWidget(self._envolver_scroll(self._pagina_karaoke()))
         self.paginas.addWidget(self._envolver_scroll(self._pagina_herramientas()))
         medio.addWidget(self.paginas, 1)
         root.addLayout(medio, 1)
@@ -294,7 +306,8 @@ class AutotuneStudio(QWidget):
 
         self.botones_etapa = []
         for i, texto in enumerate(
-                ("①  Fuente", "②  Afinar", "③  Mezclar", "④  Herramientas")):
+                ("①  Fuente", "②  Afinar", "③  Mezclar",
+                 "④  Karaoke", "⑤  Herramientas")):
             b = QPushButton(texto)
             b.setObjectName("etapa")
             b.setCheckable(True)
@@ -309,6 +322,17 @@ class AutotuneStudio(QWidget):
         self.paginas.setCurrentIndex(idx)
         for i, b in enumerate(self.botones_etapa):
             b.setChecked(i == idx)
+
+        # Karaoke (etapa 3) reproduce el instrumental + letra; al salir se vuelve
+        # a la fuente normal (original/resultado) del reproductor compartido.
+        if idx == ETAPA_KARAOKE:
+            if self._temas_karaoke and not self._karaoke_activo:
+                self._cargar_karaoke(self.combo_karaoke.currentIndex())
+        elif self._karaoke_activo:
+            self._karaoke_activo = False
+            self.reproductor.detener()
+            self._cargar_fuente_en_reproductor()
+            self.vista_onda.set_pos(0.0)
 
     def _envolver_scroll(self, contenido):
         """Mete una página en un área con scroll para que las etapas altas
@@ -510,6 +534,39 @@ class AutotuneStudio(QWidget):
 
         suno.layout().addLayout(sl)
         return suno
+
+    def _pagina_karaoke(self):
+        # ---- Tarjeta: Karaoke ----
+        kar = self._tarjeta("4 · Karaoke")
+        kl = QVBoxLayout()
+        kl.setSpacing(10)
+
+        fila = QHBoxLayout()
+        fila.addWidget(QLabel("Tema"))
+        self.combo_karaoke = QComboBox()
+        self._temas_karaoke = self._listar_temas_karaoke()
+        if self._temas_karaoke:
+            self.combo_karaoke.addItems([t[1] for t in self._temas_karaoke])
+        else:
+            self.combo_karaoke.addItem("(sin temas en data/07_karaoke/)")
+            self.combo_karaoke.setEnabled(False)
+        self.combo_karaoke.currentIndexChanged.connect(self._on_tema_karaoke)
+        fila.addWidget(self.combo_karaoke, 1)
+        kl.addLayout(fila)
+
+        self.lbl_karaoke = QLabel(
+            "Elegí un tema y dale ▶: el instrumental suena y la letra se resalta "
+            "palabra por palabra.")
+        self.lbl_karaoke.setObjectName("estado")
+        self.lbl_karaoke.setWordWrap(True)
+        kl.addWidget(self.lbl_karaoke)
+
+        self.vista_karaoke = VistaKaraoke()
+        self.vista_karaoke.setMinimumHeight(280)
+        kl.addWidget(self.vista_karaoke, 1)
+
+        kar.layout().addLayout(kl)
+        return kar
 
     def _pagina_herramientas(self):
         # ---- Tarjeta: Herramientas ----
@@ -875,9 +932,12 @@ class AutotuneStudio(QWidget):
         self.transporte.set_reproduciendo(False)
         self.vista_onda.set_pos(0.0)
         self.transporte.set_tiempo(0, self.reproductor.duracion)
+        if self._karaoke_activo:
+            self.vista_karaoke.reiniciar()
 
     def _on_fuente(self, idx):
         self.fuente_idx = idx
+        self._karaoke_activo = False     # cambiar de fuente sale del modo karaoke
         self.reproductor.detener()
         self._cargar_fuente_en_reproductor()
         self.vista_onda.set_pos(0.0)
@@ -889,14 +949,71 @@ class AutotuneStudio(QWidget):
         self.reproductor.seek(segundos)
         self.vista_onda.set_pos(segundos)
         self.transporte.set_tiempo(segundos, self.reproductor.duracion)
+        if self._karaoke_activo:
+            self.vista_karaoke.set_tiempo(segundos)
 
     def _tick_play(self):
         seg = self.reproductor.segundos()
         self.vista_onda.set_pos(seg)
         self.transporte.set_tiempo(seg, self.reproductor.duracion)
+        if self._karaoke_activo:
+            self.vista_karaoke.set_tiempo(seg)
         if not self.reproductor.activo:        # terminó solo al llegar al final
             self.timer_play.stop()
             self.transporte.set_reproduciendo(False)
+
+    # --------------------------------------------------------------------- #
+    # Karaoke (instrumental + letra resaltada por tiempo)
+    # --------------------------------------------------------------------- #
+    def _listar_temas_karaoke(self):
+        """Temas con JSON de tiempos + instrumental disponibles.
+
+        Devuelve [(ruta_json, base), ...] ordenado por número de tema.
+        """
+        if not os.path.isdir(DIR_KARAOKE):
+            return []
+        temas = []
+        for f in os.listdir(DIR_KARAOKE):
+            if not f.lower().endswith(".json") or f.endswith(".asr.json"):
+                continue
+            base = f[:-5]
+            inst = os.path.join(DIR_INSTRUMENTALES, base + "_instrumental.wav")
+            if os.path.exists(inst):
+                temas.append((os.path.join(DIR_KARAOKE, f), base))
+        m = re.match
+        return sorted(temas, key=lambda t: int(m(r"\s*(\d+)-", t[1]).group(1))
+                      if m(r"\s*(\d+)-", t[1]) else 99)
+
+    def _on_tema_karaoke(self, idx):
+        if self._temas_karaoke and self.paginas.currentIndex() == ETAPA_KARAOKE:
+            self._cargar_karaoke(idx)
+
+    def _cargar_karaoke(self, idx):
+        """Carga el instrumental + la letra cronometrada del tema `idx`."""
+        if not self._temas_karaoke or not (0 <= idx < len(self._temas_karaoke)):
+            return
+        ruta_json, base = self._temas_karaoke[idx]
+        inst = os.path.join(DIR_INSTRUMENTALES, base + "_instrumental.wav")
+        try:
+            self.audio_karaoke = eng.cargar(inst)
+            with open(ruta_json, encoding="utf-8") as f:
+                palabras = json.load(f)
+        except Exception as e:
+            self.lbl_karaoke.setText(f"⚠️  No pude cargar «{base}»: {e}")
+            return
+
+        self._karaoke_activo = True
+        self.reproductor.detener()
+        self.reproductor.cargar(self.audio_karaoke)
+        self.vista_onda.set_audio(self.audio_karaoke)
+        self.vista_onda.set_pos(0.0)
+        self.timer_play.stop()
+        self.transporte.set_reproduciendo(False)
+        self.transporte.set_tiempo(0, self.reproductor.duracion)
+        self.vista_karaoke.cargar(palabras)
+        self.vista_karaoke.reiniciar()
+        self.lbl_karaoke.setText(
+            f"♪ {base} — {len(palabras)} palabras cronometradas. Dale ▶.")
 
     def al_guardar(self):
         if self.audio_procesado is None:
@@ -984,6 +1101,14 @@ class AutotuneStudio(QWidget):
                 letter-spacing: 1px;
             }
             #estado { color: #9aa0b0; font-size: 13px; }
+            #karaoke {
+                background-color: #11131a;
+                border: 1px solid #2a2e38;
+                border-radius: 8px;
+                padding: 14px 18px;
+                color: #c9cdd8;
+                line-height: 150%;
+            }
             #tarjeta {
                 background-color: #1d2027;
                 border: 1px solid #2a2e38;
