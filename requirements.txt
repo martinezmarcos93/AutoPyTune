@@ -8,12 +8,21 @@ psola
 pedalboard
 scipy
 
-# --- karaoke: alineación letra↔audio (ASR offline) ---
-# faster-whisper (CTranslate2, CPU, MIT) transcribe la voz extraída con
-# timestamps por palabra. truststore usa el trust store de Windows para que
-# la descarga del modelo desde HuggingFace no falle con el SSL del antivirus.
+# --- karaoke Etapa 1: texto exacto cantado ---
+# La verdad final la transcribió Marcos a mano (data/07_karaoke/LETRAS CON VERSOS
+# REPETIDOS FINAL.txt) y src/compilar_letras.py la compila a los NN-Tema.txt.
+# Antes se exploró con faster-whisper (ASR) y con Gemini multimodal (escucha el
+# audio y devuelve la letra cantada); ambos quedaron como pasos intermedios.
+# google-genai: SDK de Gemini (Apache-2.0, auditado 2026-06-26, sin CVEs).
+# truststore: usa el trust store de Windows para el SSL del antivirus (descargas HF).
 faster-whisper
+google-genai
 truststore
+
+# --- karaoke Etapa 2: timing por palabra (forced alignment) ---
+# torchaudio trae el modelo MMS_FA (CTC forced alignment, multilingüe). Alinea el
+# texto exacto contra la voz IA y da el tiempo de cada palabra (src/alinear_forzado.py).
+torchaudio
 
 # --- separación de voz / instrumental (Demucs) ---
 demucs
