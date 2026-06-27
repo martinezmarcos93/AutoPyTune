@@ -27,8 +27,12 @@ from widgets.waveform import VistaOnda
 from widgets.transporte import BarraTransporte
 from widgets.karaoke import VistaKaraoke
 
-# Rutas del proyecto (gui.py vive en src/, los datos en ../data/).
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Rutas del proyecto. En desarrollo gui.py vive en src/ y los datos en ../data/.
+# Empaquetado con PyInstaller (sys.frozen): data/ va al lado del ejecutable.
+if getattr(sys, "frozen", False):
+    ROOT = os.path.dirname(sys.executable)
+else:
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIR_ORIGINALES = os.path.join(ROOT, "data", "00_originales")
 DIR_INSTRUMENTALES = os.path.join(ROOT, "data", "01_instrumentales")
 DIR_KARAOKE = os.path.join(ROOT, "data", "07_karaoke")
