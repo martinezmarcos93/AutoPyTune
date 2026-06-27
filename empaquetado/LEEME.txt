@@ -1,0 +1,25 @@
+AutoPyTune — Karaoke para grabar
+=================================
+
+CÓMO ABRIR
+  Doble-click en "Abrir AutoPyTune.bat" (o directamente en "AutoPyTune.exe").
+  No hay que instalar Python ni ninguna dependencia: todo viene incluido.
+
+QUÉ HACE
+  Reproduce el instrumental de cada tema y muestra la letra sincronizada
+  palabra por palabra (karaoke), para cantar encima y grabar con el equipo.
+
+REQUISITOS
+  Windows 10/11 de 64 bits. Nada más.
+
+CONTENIDO DE LA CARPETA
+  AutoPyTune.exe        el programa
+  Abrir AutoPyTune.bat  lanzador (doble-click)
+  _internal\            runtime incluido (no tocar)
+  data\01_instrumentales  los instrumentales de los 11 temas
+  data\07_karaoke         las letras cronometradas (.json) y de texto (.txt)
+
+NOTAS
+  - Mover/copiar SIEMPRE la carpeta entera (el .exe necesita _internal\ y data\).
+  - Las etapas de Separar/Analizar/Afinar no están en esta versión liviana
+    (eran preprocesamiento, ya hecho). Esta build es para reproducir+karaoke.

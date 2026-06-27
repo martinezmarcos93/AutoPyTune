@@ -38,6 +38,10 @@ data/ZZZ-Letras/
 data/07_karaoke/
 spikes/karaoke/salida/
 
+# Empaquetado (PyInstaller): salidas de build, no fuente
+build/
+dist/
+
 # Sistema
 .DS_Store
 Thumbs.db
