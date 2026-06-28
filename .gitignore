@@ -36,7 +36,7 @@ docs/colab/
 # Letras y datos de karaoke (texto de las canciones — no se publican)
 data/ZZZ-Letras/
 data/07_karaoke/
-spikes/karaoke/salida/
+spikes/*/salida/
 
 # Empaquetado (PyInstaller): salidas de build, no fuente
 build/
